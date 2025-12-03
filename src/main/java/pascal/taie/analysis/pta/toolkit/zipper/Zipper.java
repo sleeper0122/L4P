@@ -25,6 +25,7 @@ package pascal.taie.analysis.pta.toolkit.zipper;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import pascal.taie.World;
 import pascal.taie.analysis.graph.flowgraph.InstanceNode;
 import pascal.taie.analysis.graph.flowgraph.Node;
 import pascal.taie.analysis.graph.flowgraph.ObjectFlowGraph;
@@ -40,15 +41,20 @@ import pascal.taie.language.type.Type;
 import pascal.taie.util.MutableInt;
 import pascal.taie.util.Timer;
 import pascal.taie.util.collection.Maps;
+import pascal.taie.util.collection.Pair;
 import pascal.taie.util.collection.Sets;
+import pascal.taie.util.graph.Graph;
+import pascal.taie.util.graph.SimpleGraph;
+
+import guru.nidi.graphviz.attribute.*;
+import guru.nidi.graphviz.engine.*;
+import guru.nidi.graphviz.model.*;
+import static guru.nidi.graphviz.model.Factory.*;
 
 import javax.annotation.Nullable;
-import java.util.ArrayDeque;
-import java.util.Collection;
-import java.util.Deque;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.io.File;
+import java.io.IOException;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -84,32 +90,62 @@ public class Zipper {
 
     private Map<JMethod, MutableInt> methodPts;
 
+    private final boolean isLLM;
+
+    private static final String ECM_IR = "ecm.txt";
+
+    private static AtomicInteger totalPCM = new AtomicInteger(0);
+
+    private Map<Type, Collection<JMethod>> pcmMapOld;
+
+    private static Integer pngCount = 0;
+
     /**
      * Parses Zipper argument and runs Zipper.
      */
     public static Set<JMethod> run(PointerAnalysisResult pta, String arg) {
         boolean isExpress;
+        boolean isLLM;
         float pv;
         if (arg.equals("zipper")) {
             isExpress = false;
+            isLLM = false;
             pv = 1;
         } else if (arg.equals("zipper-e")) {
             isExpress = true;
+            isLLM = false;
             pv = DEFAULT_PV;
         } else if (arg.startsWith("zipper-e=")) { // zipper-e=pv
             isExpress = true;
+            isLLM = false;
             pv = Float.parseFloat(arg.split("=")[1]);
+        } else if (arg.startsWith("l4p")) {
+            isExpress = true;
+            isLLM = true;
+            pv = DEFAULT_PV;
         } else {
             throw new IllegalArgumentException("Illegal Zipper argument: " + arg);
         }
-        return new Zipper(pta, isExpress, pv)
+        return new Zipper(pta, isExpress, pv, isLLM)
                 .selectPrecisionCriticalMethods();
     }
 
-    public Zipper(PointerAnalysisResult ptaBase, boolean isExpress, float pv) {
+    public static Pair<Map<Type, Collection<JMethod>>, Map<Type, Collection<JMethod>>> run_test(PointerAnalysisResult pta, String arg) {
+        boolean isExpress;
+        boolean isLLM;
+        float pv;
+        isExpress = true;
+        isLLM = false;
+        pv = DEFAULT_PV;
+        return new Zipper(pta, isExpress, pv, isLLM)
+                .selectPrecisionCriticalMethodsSets();
+    }
+
+    public Zipper(PointerAnalysisResult ptaBase, boolean isExpress, float pv, boolean isLLM) {
         this.pta = new PointerAnalysisResultExImpl(ptaBase, true);
         this.isExpress = isExpress;
         this.pv = pv;
+        this.isLLM = isLLM;
         this.oag = Timer.runAndCount(() -> new ObjectAllocationGraph(pta),
                 "Building OAG", Level.INFO);
         this.pce = Timer.runAndCount(() -> new PotentialContextElement(pta, oag),
@@ -128,6 +164,48 @@ public class Zipper {
         totalPFGNodes = new AtomicInteger(0);
         totalPFGEdges = new AtomicInteger(0);
         pcmMap = Maps.newConcurrentMap(1024);
+        pcmMapOld = Maps.newConcurrentMap(1024);
+
+        // prepare information for Zipper-e
+        if (isExpress) {
+            PointerAnalysisResult pta = this.pta.getBase();
+            int totalPts = 0;
+            methodPts = Maps.newMap(pta.getCallGraph().getNumberOfMethods());
+            for (Var var : pta.getVars()) {
+                int size = pta.getPointsToSet(var).size();
+                if (size > 0) {
+                    totalPts += size;
+                    methodPts.computeIfAbsent(var.getMethod(),
+                                    __ -> new MutableInt(0))
+                            .add(size);
+                }
+            }
+            pcmThreshold = (int) (pv * totalPts);
+        }
+
+        // build and analyze precision-flow graphs
+        Set<Type> types = pta.getObjectTypes();
+        Timer.runAndCount(() -> types.stream().forEach(this::analyze),
+                "Building and analyzing PFG", Level.INFO);
+        logger.info("#types: {}", types.size());
+        logger.info("#avg. nodes in PFG: {}", totalPFGNodes.get() / types.size());
+        logger.info("#avg. edges in PFG: {}", totalPFGEdges.get() / types.size());
+        logger.info("total types: {}", totalPCM.get());
+
+        // collect all precision-critical methods
+        Set<JMethod> pcms = pcmMap.values()
+                .stream()
+                .flatMap(Collection::stream)
+                .collect(Collectors.toUnmodifiableSet());
+        logger.info("#precision-critical methods: {}", pcms.size());
+        return pcms;
+    }
+
+    public Pair<Map<Type, Collection<JMethod>>, Map<Type, Collection<JMethod>>> selectPrecisionCriticalMethodsSets() {
+        totalPFGNodes = new AtomicInteger(0);
+        totalPFGEdges = new AtomicInteger(0);
+        pcmMap = Maps.newConcurrentMap(1024);
+        pcmMapOld = Maps.newConcurrentMap(1024);
 
         // prepare information for Zipper-e
         if (isExpress) {
@@ -160,7 +238,7 @@ public class Zipper {
                 .flatMap(Collection::stream)
                 .collect(Collectors.toUnmodifiableSet());
         logger.info("#precision-critical methods: {}", pcms.size());
-        return pcms;
+        return new Pair<>(pcmMapOld, pcmMap);
     }
 
     private void analyze(Type type) {
@@ -171,8 +249,10 @@ public class Zipper {
                 .mapToInt(pfg::getOutDegreeOf)
                 .sum());
         Set<JMethod> pcms = getPrecisionCriticalMethods(pfg);
+        // getPFGFlow(pfg);
         if (!pcms.isEmpty()) {
             pcmMap.put(type, pcms);
+            totalPCM.addAndGet(1);
         }
     }
 
@@ -183,7 +263,28 @@ public class Zipper {
                 .filter(Objects::nonNull)
                 .filter(pce.pceMethodsOf(pfg.getType())::contains)
                 .collect(Collectors.toUnmodifiableSet());
-        if (isExpress) {
+        if (isLLM) {
+//            Set<JMethod> new_pcms = new HashSet<>();
+//            for (JMethod m : pcms) {
+//                StringBuilder sb = new StringBuilder();
+//                for (Stmt stmt : m.getIR().getStmts()) {
+//                    sb.append(stmt.toString());
+//                }
+//                String ir = sb.toString();
+//                String result = LLMInteraction.query(ir, pfg.getType().getName());
+//                if(result.equals("YES")) {
+//                    new_pcms.add(m);
+//                }
+//            }
+//            pcms = new_pcms;
+
+
+        }
+        if (!pcms.isEmpty()) {
+            pcmMapOld.put(pfg.getType(), pcms);
+        }
+
+        if (isExpress && !isLLM) {
             int accPts = 0;
             for (JMethod m : pcms) {
                 MutableInt mPtsSize = methodPts.get(m);
@@ -233,4 +334,97 @@ public class Zipper {
         }
         return null;
     }
+
+    private static HashMap<Node, Graph<Node>> getPFGFlows(PrecisionFlowGraph pfg) {
+        HashMap<Node, Graph<Node>> ret2flows = new HashMap<>();
+
+        Set<Node> visited = Sets.newSet();
+        for (VarNode outNode : pfg.getOutNodes()) {
+            SimpleGraph<Node> flows = new SimpleGraph<>();
+            Deque<Node> workList = new ArrayDeque<>();
+            workList.add(outNode);
+            while (!workList.isEmpty()) {
+                Node node = workList.poll();
+                if (visited.add(node)) {
+                    flows.addNode(node);
+                    pfg.getPredsOf(node)
+                            .stream()
+                            .filter(Predicate.not(visited::contains))
+                            .forEach(pred -> {
+                                workList.add(pred);
+                                flows.addNode(pred);
+                                flows.addEdge(pred, node);
+                            });
+                }
+            }
+            if (!flows.getNodes().isEmpty())
+                ret2flows.put(outNode, flows);
+        }
+        return ret2flows;
+
+    }
+
+    private static Graph<Node> getPFGFlow(PrecisionFlowGraph pfg) {
+        Set<Node> visited = Sets.newSet();
+        SimpleGraph<Node> flows = new SimpleGraph<>();
+        for (VarNode outNode : pfg.getOutNodes()) {
+            Deque<Node> workList = new ArrayDeque<>();
+            workList.add(outNode);
+            while (!workList.isEmpty()) {
+                Node node = workList.poll();
+                pfg.getPredsOf(node).forEach(pred -> {
+                    flows.addNode(pred);
+                    flows.addEdge(pred, node);
+                    if (visited.add(pred)) {
+                        workList.add(pred);
+                    }
+                });
+            }
+        }
+
+        MutableGraph graph = mutGraph("zipper-e").setDirected(true);
+
+        Set<Node> nodes = flows.getNodes();
+
+        MutableNode[] gvNodes = new MutableNode[nodes.size()];
+        int idx = 0;
+        for (Node n : nodes) {
+            gvNodes[idx] = mutNode(String.valueOf(n));
+            graph.add(gvNodes[idx]);
+            idx++;
+        }
+
+        String fileCount = pngCount.toString();
+        File outFile = new File(World.get().getOptions().getOutputDir(), "jython" + fileCount + ".png");
+        for (Node from : nodes) {
+            for (Node to : flows.getSuccsOf(from)) {
+                gvNodes[indexOf(nodes, from)].addLink(gvNodes[indexOf(nodes, to)]);
+            }
+        }
+
+        if (gvNodes.length < 15) {
+            logger.info("Drawing zipper-e png......");
+            try {
+                Graphviz.fromGraph(graph).width(2000).render(Format.PNG).toFile(outFile);
+            } catch (IOException e) {
+                logger.info("no such file.");
+            }
+            logger.info("Drawing zipper-e png done.");
+            pngCount++;
+        }
+
+        return flows;
+    }
+
+    private static int indexOf(Set<Node> set, Node key) {
+        int i = 0;
+        for (Node n : set) {
+            if (n.equals(key)) return i;
+            i++;
+        }
+        throw new IllegalArgumentException("Node not in the set.");
+    }
+
+
+
 }

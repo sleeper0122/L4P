@@ -1,0 +1,25 @@
+optionsFile: null
+printHelp: false
+classPath:
+  - java-benchmarks/dacapo-2006/jython-deps.jar
+appClassPath:
+  - java-benchmarks/dacapo-2006/jython.jar
+mainClass: Harness
+inputClasses: []
+javaVersion: 6
+prependJVM: false
+allowPhantom: false
+worldBuilderClass: pascal.taie.frontend.soot.SootWorldBuilder
+outputDir: output
+preBuildIR: false
+worldCacheMode: false
+scope: APP
+nativeModel: true
+planFile: null
+analyses:
+  pta: cs:2-obj;advanced:test;reflection-log:./java-benchmarks/dacapo-2006/jython-refl.log;time-limit:60
+  may-fail-cast: ""
+  poly-call: ""
+onlyGenPlan: false
+keepResult:
+  - $KEEP-ALL

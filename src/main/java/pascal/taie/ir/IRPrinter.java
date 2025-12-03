@@ -30,12 +30,35 @@ import pascal.taie.ir.stmt.Invoke;
 import pascal.taie.ir.stmt.Stmt;
 
 import java.io.PrintStream;
+import java.io.PrintWriter;
 import java.util.Formatter;
 import java.util.stream.Collectors;
 
 public class IRPrinter {
 
     public static void print(IR ir, PrintStream out) {
+        // print method signature
+        out.println("---------- " + ir.getMethod() + " ----------");
+        // print parameters
+        out.print("Parameters: ");
+        out.println(ir.getParams()
+                .stream()
+                .map(p -> p.getType() + " " + p)
+                .collect(Collectors.joining(", ")));
+        // print all variables
+        out.println("Variables:");
+        ir.getVars().forEach(v -> out.println(v.getType() + " " + v));
+        // print all statements
+        out.println("Statements:");
+        ir.forEach(s -> out.println(toString(s)));
+        // print all try-catch blocks
+        if (!ir.getExceptionEntries().isEmpty()) {
+            out.println("Exception entries:");
+            ir.getExceptionEntries().forEach(b -> out.println("  " + b));
+        }
+    }
+
+    public static void print(IR ir, PrintWriter out) {
         // print method signature
         out.println("---------- " + ir.getMethod() + " ----------");
         // print parameters

@@ -30,6 +30,13 @@ dependencies {
     implementation("org.slf4j:slf4j-nop:2.0.13")
     // JSR305, for javax.annotation
     implementation("com.google.code.findbugs:jsr305:3.0.2")
+    // LLM api
+    implementation("com.volcengine:volcengine-java-sdk-ark-runtime:0.2.26")
+    // Prompt generation
+    implementation("dev.langchain4j:langchain4j-open-ai:1.0.0-beta3")
+    implementation("dev.langchain4j:langchain4j:1.0.0-beta3")
+
+    implementation("guru.nidi:graphviz-java:0.18.1")
 
     testImplementation(platform("org.junit:junit-bom:5.13.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")

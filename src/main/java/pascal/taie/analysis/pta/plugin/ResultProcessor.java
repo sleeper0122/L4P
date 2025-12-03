@@ -38,6 +38,7 @@ import pascal.taie.config.AnalysisOptions;
 import pascal.taie.ir.exp.Var;
 import pascal.taie.language.classes.JMethod;
 import pascal.taie.util.AnalysisException;
+import pascal.taie.util.Timer;
 import pascal.taie.util.collection.Lists;
 import pascal.taie.util.collection.Maps;
 import pascal.taie.util.collection.Streams;
@@ -81,6 +82,8 @@ public class ResultProcessor implements Plugin {
 
     private static final String CI_RESULTS_FILE = "pta-ci-results.txt";
 
+    private static final String RESULTS_CSV = "results.csv";
+
     private static final String HEADER = "Points-to sets of all ";
 
     /**
@@ -92,13 +95,24 @@ public class ResultProcessor implements Plugin {
 
     private Solver solver;
 
+    private Timer ptaTimer;
+
+    private static float time;
+
     @Override
     public void setSolver(Solver solver) {
         this.solver = solver;
     }
 
+    public void onStart() {
+        ptaTimer = new Timer("Test Timer");
+        ptaTimer.start();
+    }
+
     @Override
     public void onFinish() {
+        ptaTimer.stop();
+        time = ptaTimer.inSecond();
         process(solver.getOptions(), solver.getResult());
     }
 
@@ -165,6 +179,17 @@ public class ResultProcessor implements Plugin {
         logger.info(String.format("%-30s%s (insens) / %s (sens)", "#call graph edges:",
                 format(callEdgeInsens), format(callEdgeSens)));
         logger.info("----------------------------------------");
+
+        //if (reachableInsens <= 12837 && callEdgeInsens <= 113419) {
+            File outFile = new File(World.get().getOptions().getOutputDir(), RESULTS_CSV);
+            try (PrintStream out = new PrintStream(new FileOutputStream(outFile, true))) {
+                logger.info("Dumping analysis results in csv form");
+
+                out.printf("%s, %s, %s%n",String.valueOf(time) , format(reachableInsens), format(callEdgeInsens));
+            } catch (FileNotFoundException e) {
+                logger.error("Fail to open output file {}", outFile);
+            }
+        //}
     }
 
     private static String format(long i) {

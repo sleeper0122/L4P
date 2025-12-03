@@ -22,10 +22,7 @@
 
 package pascal.taie.analysis.pta.toolkit.zipper;
 
-import pascal.taie.analysis.graph.flowgraph.FlowEdge;
-import pascal.taie.analysis.graph.flowgraph.Node;
-import pascal.taie.analysis.graph.flowgraph.ObjectFlowGraph;
-import pascal.taie.analysis.graph.flowgraph.VarNode;
+import pascal.taie.analysis.graph.flowgraph.*;
 import pascal.taie.language.type.Type;
 import pascal.taie.util.collection.Maps;
 import pascal.taie.util.collection.MultiMap;
@@ -112,4 +109,23 @@ class PrecisionFlowGraph implements Graph<Node> {
     public Set<Node> getNodes() {
         return nodes;
     }
+
+
+    public String getEdgeType(Node source, Node target) {
+        for (FlowEdge value : outWUEdges.get(source)) {
+            if(value.target().toString().equals(source.toString())) {
+                return value.kind().toString();
+            }
+        }
+        for (FlowEdge value : inWUEdges.get(source)) {
+            if(value.target().toString().equals(source.toString())) {
+                return value.kind().toString();
+            }
+        }
+        if(ofg.hasEdge(source, target)) {
+            return "yes";
+        }
+        return null;
+    }
+
 }
